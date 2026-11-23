@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Статистика боїв War Thunder</title>
+  <style>
+    :root { --bg: #14171c; --card: #1e232b; --line: #2e3540; --text: #e6e9ee;
+            --muted: #8b95a5; --accent: #e8a33d; --win: #4caf7a; --lose: #d9534f; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+           font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 760px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+    h1 { margin: 0 0 .25rem; font-size: 1.6rem; }
+    h1 span { color: var(--accent); }
+    .sub { color: var(--muted); margin: 0 0 1.5rem; }
+    h2 { font-size: 1.1rem; margin: 2rem 0 .75rem; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 1rem; }
+    form { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .6rem; }
+    label { display: flex; flex-direction: column; gap: .25rem; font-size: .8rem; color: var(--muted); }
+    input, select, button { font: inherit; padding: .55rem .6rem; border-radius: 6px;
+                            border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+    button { background: var(--accent); color: #14171c; border: none; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: default; }
+    #status { min-height: 1.4rem; margin: .6rem 0 0; font-size: .9rem; }
+    .ok { color: var(--win); } .err { color: var(--lose); }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem; }
+    .stat b { display: block; font-size: 1.5rem; color: var(--accent); }
+    .stat span { font-size: .8rem; color: var(--muted); }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th, td { text-align: left; padding: .5rem .4rem; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 500; font-size: .8rem; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .win { color: var(--win); } .lose { color: var(--lose); }
+    .del { background: none; color: var(--muted); padding: .2rem .5rem; border: 1px solid var(--line); }
+    .del:hover { color: var(--lose); border-color: var(--lose); }
+    .empty { color: var(--muted); text-align: center; padding: 1.5rem 0; }
+    .rates div { display: flex; justify-content: space-between; padding: .3rem 0;
+                 border-bottom: 1px solid var(--line); }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Статистика боїв <span>War Thunder</span></h1>
+  <p class="sub">Мій особистий журнал боїв: техніка, перемоги, знищення.</p>
+
+  <div class="card">
+    <form id="form">
+      <label>Дата <input id="date" type="date" required></label>
+      <label>Техніка <input id="vehicle" placeholder="F/A-18C" required maxlength="40"></label>
+      <label>Режим
+        <select id="mode"><option>РБ</option><option>АБ</option><option>СБ</option></select>
+      </label>
+      <label>Результат
+        <select id="result"><option>перемога</option><option>поразка</option></select>
+      </label>
+      <label>Знищено <input id="kills" type="number" min="0" step="1" value="0" required></label>
+      <label>Хвилини <input id="minutes" type="number" min="0.1" step="0.1" placeholder="12" required></label>
+      <button id="submit">Додати бій</button>
+    </form>
+    <p id="status"></p>
+  </div>
+
+  <h2>Звіт</h2>
+  <div class="stats">
+    <div class="card stat"><b id="s-battles">–</b><span>боїв усього</span></div>
+    <div class="card stat"><b id="s-avg">–</b><span>знищено в середньому</span></div>
+    <div class="card stat"><b id="s-best">–</b><span>найкращий бій</span></div>
+  </div>
+  <div class="card rates" id="rates" style="margin-top:.6rem"></div>
+
+  <h2>Бої</h2>
+  <div class="card">
+    <table>
+      <thead><tr><th>Дата</th><th>Техніка</th><th>Режим</th><th>Результат</th>
+                 <th class="num">Знищ.</th><th class="num">Хв</th><th></th></tr></thead>
+      <tbody id="list"></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+  const API = "https://api.prodachen.pp.ua";
+
+  // Увесь текст з сервера виводиться ТІЛЬКИ через textContent, ніколи через innerHTML.
+  // Інакше бій з технікою "<script>...</script>" виконав би код у браузері відвідувача (XSS).
+  function cell(row, text, className) {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (className) td.className = className;
+    row.appendChild(td);
+    return td;
+  }
+
+  function setStatus(text, ok) {
+    const s = document.getElementById("status");
+    s.textContent = text;
+    s.className = ok ? "ok" : "err";
+  }
+
+  async function loadBattles() {
+    const response = await fetch(API + "/battles");
+    const battles = await response.json();
+    const list = document.getElementById("list");
+    list.replaceChildren();
+    if (battles.length === 0) {
+      const row = list.insertRow();
+      const td = cell(row, "Боїв ще немає. Додайте перший!", "empty");
+      td.colSpan = 7;
+      return;
+    }
+    for (const b of battles.slice().reverse()) {          // нові зверху
+      const row = list.insertRow();
+      cell(row, b.date);
+      cell(row, b.vehicle);
+      cell(row, b.mode);
+      cell(row, b.result, b.result === "перемога" ? "win" : "lose");
+      cell(row, b.kills, "num");
+      cell(row, b.minutes, "num");
+      const td = cell(row, "");
+      const del = document.createElement("button");
+      del.className = "del";
+      del.textContent = "✕";
+      del.title = "видалити";
+      del.addEventListener("click", () => deleteBattle(b.id));
+      td.appendChild(del);
+    }
+  }
+
+  async function loadReport() {
+    const response = await fetch(API + "/report");
+    const r = await response.json();
+    document.getElementById("s-battles").textContent = r.battles;
+    document.getElementById("s-avg").textContent = r.average_kills;
+    document.getElementById("s-best").textContent =
+      r.best_battle ? `${r.best_battle.kills} (${r.best_battle.vehicle})` : "–";
+    const rates = document.getElementById("rates");
+    rates.replaceChildren();
+    for (const [vehicle, rate] of Object.entries(r.win_rate_by_vehicle)) {
+      const line = document.createElement("div");
+      const name = document.createElement("span");
+      name.textContent = vehicle;
+      const value = document.createElement("span");
+      value.textContent = rate + "% перемог";
+      line.append(name, value);
+      rates.appendChild(line);
+    }
+    rates.style.display = rates.children.length ? "" : "none";
+  }
+
+  async function refresh() {
+    try {
+      await Promise.all([loadBattles(), loadReport()]);
+    } catch (e) {
+      setStatus("не вдалося зв'язатися з сервером", false);
+    }
+  }
+
+  async function deleteBattle(id) {
+    if (!confirm("Видалити цей бій?")) return;
+    const response = await fetch(`${API}/battles/${id}`, { method: "DELETE" });
+    setStatus(response.ok ? "бій видалено" : "не вдалося видалити", response.ok);
+    refresh();
+  }
+
+  document.getElementById("form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = document.getElementById("submit");
+    button.disabled = true;
+    const body = {
+      date: document.getElementById("date").value,
+      vehicle: document.getElementById("vehicle").value,
+      mode: document.getElementById("mode").value,
+      result: document.getElementById("result").value,
+      kills: document.getElementById("kills").value,
+      minutes: document.getElementById("minutes").value,
+    };
+    try {
+      const response = await fetch(API + "/battles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const result = await response.json();
+      setStatus(response.ok ? "бій додано" : "помилка: " + result.error, response.ok);
+      if (response.ok) document.getElementById("kills").value = 0;
+    } catch (e) {
+      setStatus("не вдалося зв'язатися з сервером", false);
+    }
+    button.disabled = false;
+    refresh();
+  });
+
+  document.getElementById("date").valueAsDate = new Date();
+  refresh();
+</script>
+</body>
+</html>

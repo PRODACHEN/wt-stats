@@ -78,3 +78,18 @@ HTTPS:
     git pull && sudo systemctl restart wt-stats
 
 Логи: sudo journalctl -u wt-stats -n 50
+
+## Фронтенд і Cloudflare
+
+Сайт: https://prodachen.pp.ua (Netlify, тека frontend/), API: https://api.prodachen.pp.ua.
+
+- Netlify: Base directory і Publish directory = frontend, build command порожній.
+- Cloudflare: NS домену на Cloudflare, A api через проксі (оранжева хмарка),
+  SSL/TLS Full (strict), Always Use HTTPS, rate limiting на /battles,
+  Bypass cache для api.prodachen.pp.ua/*.
+- CORS у app.py дозволяє лише https://prodachen.pp.ua.
+- Сервер приймає 80/443 лише від Cloudflare: bash deploy/cloudflare.sh
+- Дані у фронтенді виводяться лише через textContent (захист від XSS).
+
+Локальна перевірка фронтенду: python -m http.server 8080 у теці frontend/,
+у app.py тимчасово додати "http://localhost:8080" до origins.

@@ -2,11 +2,17 @@
 Далі у браузері: http://127.0.0.1:5000/battles"""
 
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import storage
 import logic
 
 app = Flask(__name__)
-app.json.ensure_ascii = False            # кирилиця в JSON без бій
+
+# Фронтенд живе на іншому домені, тому браузеру треба явно дозволити запити.
+# Лише наш сайт, не "*": інакше будь-який сайт міг би ходити в API від імені відвідувача.
+# Для локальної перевірки фронтенду тимчасово додайте "http://localhost:8080".
+CORS(app, origins=["https://prodachen.pp.ua"])
+app.json.ensure_ascii = False            # кирилиця в JSON як є, а не кодами \uXXXX
 storage.init()
 
 FIELDS = ("date", "vehicle", "mode", "result", "kills", "minutes")
