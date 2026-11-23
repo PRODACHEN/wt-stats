@@ -53,3 +53,28 @@ DELETE неіснуючого id дає 404.
 
 База SQLite data.db, таблиця battles:
 id, date, vehicle, mode, result, kills, minutes.
+
+## Розгортання (Google Cloud, Ubuntu 24.04)
+
+Машина e2-micro, регіон us-central1, статичний IP, галочки HTTP/HTTPS.
+На сервері:
+
+    git clone https://github.com/PRODACHEN/wt-stats.git
+    cd wt-stats
+    bash deploy/setup.sh
+
+Скрипт ставить пакети (git, python3-venv, nginx, ufw, sqlite3), створює venv,
+запускає тести, ставить службу systemd (deploy/wt-stats.service, gunicorn на
+127.0.0.1:8000), nginx (deploy/nginx.conf) і фаєрвол ufw (лише 22, 80, 443).
+
+HTTPS:
+
+    sudo snap install --classic certbot
+    sudo ln -s /snap/bin/certbot /usr/local/bin/certbot
+    sudo certbot --nginx -d api.prodachen.pp.ua
+
+Оновлення коду:
+
+    git pull && sudo systemctl restart wt-stats
+
+Логи: sudo journalctl -u wt-stats -n 50
