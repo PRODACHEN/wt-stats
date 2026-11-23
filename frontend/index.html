@@ -191,7 +191,10 @@
     refresh();
   });
 
-  document.getElementById("date").valueAsDate = new Date();
+  // сьогоднішня дата за місцевим часом (valueAsDate брав би UTC і після 22:00 ставив би вчора)
+  const now = new Date();
+  document.getElementById("date").value =
+    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   refresh();
 </script>
 </body>
