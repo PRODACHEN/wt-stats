@@ -1,26 +1,25 @@
-"""Консольний інтерфейс. Приклади:
+"""Консольний інтерфейс (дані тепер у базі data.db). Приклади:
 python cli.py add 2026-11-23 "F/A-18C" РБ перемога 4 12
 python cli.py list
 python cli.py find "F/A-18C"
 python cli.py report
-python cli.py delete 3
+python cli.py delete 3        (3 це id з команди list)
 """
 
 import sys
 import storage
 import logic
 
-FILE = "data.txt"
 USAGE = ("використання:\n"
          "  python cli.py add ДАТА ТЕХНІКА РЕЖИМ РЕЗУЛЬТАТ ЗНИЩЕНО ХВИЛИНИ\n"
          "  python cli.py list\n"
          "  python cli.py find ТЕХНІКА\n"
          "  python cli.py report\n"
-         "  python cli.py delete НОМЕР")
+         "  python cli.py delete ID")
 
 
-def print_battle(number, r):
-    print(f"{number:>3}. {r['date']}  {r['vehicle']:<14} {r['mode']:<3} "
+def print_battle(r):
+    print(f"{r['id']:>3}. {r['date']}  {r['vehicle']:<14} {r['mode']:<3} "
           f"{r['result']:<9} знищено: {r['kills']:<3} {r['minutes']:g} хв")
 
 
@@ -29,9 +28,7 @@ def main():
         print(USAGE)
         return
     command = sys.argv[1]
-    records, bad_lines = storage.load(FILE)
-    for line in bad_lines:
-        print("пропущено пошкоджений рядок:", line)
+    storage.init()
 
     if command == "add":
         if len(sys.argv) != 8:
@@ -42,27 +39,28 @@ def main():
         except ValueError as e:
             print("помилка:", e)
             return
-        records.append(record)
-        storage.save(FILE, records)
-        print("бій додано")
+        new_id = storage.add(record)
+        print("бій додано, id", new_id)
 
     elif command == "list":
+        records = storage.load()
         if not records:
             print("боїв ще немає")
-        for i, r in enumerate(records, start=1):
-            print_battle(i, r)
+        for r in records:
+            print_battle(r)
 
     elif command == "find":
         if len(sys.argv) < 3:
             print("вкажіть техніку: python cli.py find ТЕХНІКА")
             return
-        found = logic.find_by_vehicle(records, sys.argv[2])
+        found = storage.load(sys.argv[2])
         if not found:
             print("боїв на цій техніці не знайдено")
-        for i, r in enumerate(found, start=1):
-            print_battle(i, r)
+        for r in found:
+            print_battle(r)
 
     elif command == "report":
+        records = storage.load()
         if not records:
             print("боїв ще немає, звіту не буде")
             return
@@ -77,16 +75,14 @@ def main():
 
     elif command == "delete":
         try:
-            number = int(sys.argv[2])
+            battle_id = int(sys.argv[2])
         except (IndexError, ValueError):
-            print("вкажіть номер бою з команди list: python cli.py delete НОМЕР")
+            print("вкажіть id бою з команди list: python cli.py delete ID")
             return
-        if number < 1 or number > len(records):
-            print("бою з таким номером немає")
-            return
-        removed = records.pop(number - 1)
-        storage.save(FILE, records)
-        print("видалено:", removed["date"], removed["vehicle"])
+        if storage.delete(battle_id):
+            print("видалено бій", battle_id)
+        else:
+            print("бою з таким id немає")
 
     else:
         print("невідома команда:", command)
