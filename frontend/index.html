@@ -83,7 +83,7 @@
   const API = "https://api.prodachen.pp.ua";
 
   // Увесь текст з сервера виводиться ТІЛЬКИ через textContent, ніколи через innerHTML.
-  // Інакше бій з технікою "<script>...</script>" виконав би код у браузері відвідувача (XSS).
+  // Інакше бій з технікою, у назві якої є HTML-тег script, виконав би код у браузері відвідувача (XSS).
   function cell(row, text, className) {
     const td = document.createElement("td");
     td.textContent = text;
