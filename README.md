@@ -23,7 +23,11 @@
 
 | Метод  | Маршрут                    | Що робить                  |
 |--------|----------------------------|----------------------------|
-| GET    | /battles                   | усі бої                    |
+| POST   | /register                  | реєстрація {login, password} |
+| POST   | /login                     | вхід {login, password}     |
+| POST   | /logout                    | вихід                      |
+| GET    | /me                        | хто я                      |
+| GET    | /battles                   | мої бої                    |
 | GET    | /battles?vehicle=F/A-18C   | бої на одній техніці       |
 | POST   | /battles                   | додати бій (JSON)          |
 | DELETE | /battles/<id>              | видалити бій               |
@@ -38,7 +42,10 @@
     curl -X DELETE http://127.0.0.1:5000/battles/1
     curl -i http://127.0.0.1:5000/report
 
-Адміністративні маршрути (лише з сервера або через Tailscale, з токеном):
+Усі маршрути з даними працюють лише після входу (cookie сесії), інакше 401.
+Кожен користувач бачить і видаляє тільки свої бої; чужий бій дає 404.
+
+Адміністративні маршрути (лише для is_admin = 1 і лише через Tailscale, не через Cloudflare):
 
 | Метод  | Маршрут          | Що робить                         |
 |--------|------------------|-----------------------------------|
@@ -47,7 +54,15 @@
 | DELETE | /admin/battles   | видалити всі бої                  |
 | GET    | /admin/log?limit=50 | журнал дій (нові зверху)       |
 
-    curl -H "X-Admin-Token: ТОКЕН" http://127.0.0.1:8000/admin/export
+    curl -c admin.txt -X POST https://wt-stats.tail15dd4a.ts.net:8443/login -H "Content-Type: application/json" -d '{"login": "ЛОГІН", "password": "..."}'
+    curl -b admin.txt https://wt-stats.tail15dd4a.ts.net:8443/admin/log
+    curl -b admin.txt https://api.prodachen.pp.ua/admin/log        # через Cloudflare: 404
+
+Перевірка входу через curl з файлом cookie:
+
+    curl -c jar.txt -X POST https://api.prodachen.pp.ua/login -H "Content-Type: application/json" -d '{"login": "ЛОГІН", "password": "..."}'
+    curl -b jar.txt https://api.prodachen.pp.ua/battles
+    curl https://api.prodachen.pp.ua/battles                       # без cookie: 401
 
 Помилки: POST без тіла або з текстом замість числа дає 400,
 DELETE неіснуючого id дає 404.
@@ -60,6 +75,7 @@ DELETE неіснуючого id дає 404.
     python cli.py report
     python cli.py delete 1
     python cli.py log
+    python cli.py -u ЛОГІН list      (від імені іншого користувача; без -u перший адмін)
 
 ## Тести (pytest)
 
@@ -76,9 +92,10 @@ tests/test_logic.py перевіряє logic.py і клас Battle, tests/test_a
 
 База SQLite data.db (`PRAGMA foreign_keys = ON` при кожному підключенні):
 
+    users(id, login UNIQUE, password_hash, is_admin, created)   -- лише хеш (scrypt), не пароль
     vehicles(id, name UNIQUE)
-    battles(id, date, vehicle_id -> vehicles.id, mode, result, kills, minutes)
-    audit_log(id, ts, action, battle_id, details)   -- кожне додавання і видалення
+    battles(id, user_id -> users.id, date, vehicle_id -> vehicles.id, mode, result, kills, minutes)
+    audit_log(id, ts, user_id, action, battle_id, details)       -- хто, що і коли
 
 Звіт через JOIN (storage.vehicle_report, маршрут /report/vehicles):
 
@@ -86,12 +103,24 @@ tests/test_logic.py перевіряє logic.py і клас Battle, tests/test_a
     FROM battles b JOIN vehicles v ON v.id = b.vehicle_id
     WHERE b.date LIKE '2026-11-%' GROUP BY v.id;
 
-Перехід зі старої схеми (vehicle текстом у battles): `migrate.py`, одна транзакція,
-кількість боїв до і після звіряється. Запускався один раз, лежить у репозиторії
+Перехід зі старих схем: `migrate.py` (лаба 11: техніка в окрему таблицю;
+лаба 12: користувачі, усі наявні бої приписуються першому користувачу).
+Одна транзакція, кількість боїв до і після звіряється. Лежить у репозиторії
 як документ того, що сталося з базою.
 
-Розгортання лаби 11 на сервері: `git pull && bash deploy/lab11.sh`
-(бекап, міграція, тести, перезапуск, перевірки).
+## Користувачі (лаба 12)
+
+Розгортання на сервері: `git pull && bash deploy/lab12.sh ЛОГІН` (бекап, SECRET_KEY у .env,
+ADMIN_TOKEN з .env видаляється, міграція з паролем, тести, перезапуск, перевірки).
+
+Першого адміністратора призначають вручну, маршруту «зробити мене адміном» немає:
+
+    sqlite3 data.db "UPDATE users SET is_admin = 1 WHERE login = 'ЛОГІН';"
+
+Сесія: підписаний cookie Flask (ключ SECRET_KEY у .env), Secure, HttpOnly, SameSite=Lax.
+Фронтенд на prodachen.pp.ua, API на api.prodachen.pp.ua: CORS з supports_credentials=True
+і `credentials: "include"` у кожному fetch. SESSION_COOKIE_DOMAIN не задається, тому cookie
+працює і на адресі Tailscale.
 
 ## Розгортання (Google Cloud, Ubuntu 24.04)
 
@@ -135,14 +164,15 @@ HTTPS:
 
 ## Безпека (лаба 10)
 
-Секрети: токен адміна лежить у `.env` (його немає в git, шаблон `.env.example`).
+Секрети: ключ підпису сесій SECRET_KEY лежить у `.env` (його немає в git, шаблон `.env.example`).
 Створити: `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
-Перевірка, що секрет не витік: `git log -p | grep -i token` порожнє.
+Перевірка, що секрет не витік: `git log -p | grep -iE "secret_key=|admin_token="` показує лише шаблон.
+Статичний ADMIN_TOKEN з лаби 10 видалений з коду і з .env (у git він ніколи не потрапляв).
 
 Адмінка захищена трьома шарами:
 1. nginx відповідає 404 на `/admin/` з інтернету (`deploy/nginx.conf`);
 2. Flask відповідає 404, якщо є заголовок `CF-Connecting-IP` (запит прийшов через Cloudflare);
-3. Flask вимагає заголовок `X-Admin-Token` з `.env`, інакше 403.
+3. Flask вимагає сесію користувача з is_admin = 1: без входу 401, звичайний користувач 403.
 
 Доступ до адмінки з телефона/ноутбука: Tailscale на сервері
 (`sudo tailscale up`, потім `sudo tailscale serve --bg --https=8443 8000`), адреса
@@ -153,13 +183,12 @@ HTTPS:
 Блокування адрес: Cloudflare, Security → WAF → Custom rules, IP Source Address equals ... → Block.
 ssh захищений fail2ban (5 помилок за 10 хв → бан на годину).
 
-Резервні копії: `backup.py` щодня о 20:00 через cron (`deploy/lab10.sh` додає рядок),
+Резервні копії: `backup.py` щодня о 20:00 через cron,
 копії в `backups/` (не в git), зберігаються 14 днів. Відновлення перевірено:
 
     python -c "import sqlite3; print(sqlite3.connect('backups/data-2026-11-27.db').execute('SELECT COUNT(*) FROM battles').fetchone())"
 
-Розгортання змін лаби 10 на сервері: `git pull && bash deploy/lab10.sh`
-(скрипт не перезаписує робочий конфіг nginx з HTTPS від certbot, лише перевіряє його).
+Рядок cron: `0 20 * * * cd ~/wt-stats && venv/bin/python backup.py >> backups/backup.log 2>&1`.
 
 ### Аудит
 
@@ -171,8 +200,12 @@ ssh захищений fail2ban (5 помилок за 10 хв → бан на �
 | доступ в обхід Cloudflare | `curl http://IP_СЕРВЕРА` ззовні не відповідає | закрито: ufw пускає 80/443 лише з адрес Cloudflare, gunicorn слухає 127.0.0.1 |
 | флуд запитами | 100 POST у циклі через https://api... | закрито: rate limiting у Cloudflare на /battles |
 | підбір пароля ssh | `sudo fail2ban-client status sshd` | закрито: fail2ban |
-| адмінка з інтернету | https://api.prodachen.pp.ua/admin/export з телефона → 404; https://wt-stats.tail15dd4a.ts.net:8443/admin/export без токена → 403 | закрито: nginx, CF-Connecting-IP, токен |
-| секрети в git | `git log -p \| grep -i token`; `git log --all --name-only \| grep env$` | закрито: .env у .gitignore |
+| адмінка з інтернету | https://api.prodachen.pp.ua/admin/export з телефона → 404; через Tailscale без входу → 401, звичайний користувач → 403 | закрито: nginx, CF-Connecting-IP, роль is_admin |
+| секрети в git | `git log -p \| grep -iE "secret_key=\|admin_token="`; `git log --all --name-only \| grep env$` | закрито: .env у .gitignore |
 | втрата даних | видалити копію data.db, відновити з backups/ | закрито: backup.py за розкладом; раз на тиждень копіюю бекап на ноутбук (`scp`) |
 | вразливі бібліотеки | `pip install pip-audit`, `pip-audit -r requirements.txt` | перевіряю, оновлюю версії в requirements.txt |
-| видалення одного бою без входу | DELETE /battles/<id> з фронтенду | відкрито: прийнятно, поки сервіс лише мій; закриється в лабі 12 (користувачі й права) |
+| чужі дані | другий користувач: GET /battles, DELETE /battles/<чужий id> | закрито: WHERE user_id = ?, чужий запис дає 404 |
+| паролі в базі | `SELECT password_hash FROM users` | закрито: лише хеш scrypt (werkzeug) |
+| перебір логінів | неправильний пароль і неіснуючий логін | закрито: однакова відповідь 401 |
+| підбір пароля | багато POST /login | частково: пароль від 8 символів, повільний scrypt; rate limiting Cloudflare розширити на /login |
+| крадіжка сесії | cookie у DevTools | закрито: HttpOnly, Secure, SameSite=Lax, підпис SECRET_KEY |

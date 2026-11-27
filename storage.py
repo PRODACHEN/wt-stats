@@ -1,7 +1,8 @@
-"""Зберігання боїв у SQLite. Три таблиці:
+"""Зберігання боїв у SQLite. Чотири таблиці:
+  users     — користувачі (лише хеш пароля, роль is_admin),
   vehicles  — техніка (назва унікальна),
-  battles   — бої, посилаються на vehicles через vehicle_id,
-  audit_log — журнал дій (додавання і видалення з часом).
+  battles   — бої, належать користувачу (user_id) і посилаються на vehicles,
+  audit_log — журнал дій: хто, що і коли додав або видалив.
 Значення в SQL підставляються тільки через ?, ніколи через f-рядок:
 це захист від SQL-ін'єкцій."""
 
@@ -39,21 +40,33 @@ def connect():
         conn.close()
 
 
+def columns(conn, table):
+    return [r["name"] for r in conn.execute(f"PRAGMA table_info({table})")]
+
+
 def old_schema(conn):
-    """True, якщо в базі ще стара таблиця battles з текстовим полем vehicle."""
-    cols = [r["name"] for r in conn.execute("PRAGMA table_info(battles)")]
-    return "vehicle" in cols
+    """True, якщо база ще не в форматі лаби 12 (немає users / battles.user_id)."""
+    cols = columns(conn, "battles")
+    return bool(cols) and "user_id" not in cols
 
 
 def create_tables(conn):
     """CREATE TABLE IF NOT EXISTS для всіх трьох таблиць (без commit)."""
     for sql in ("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                login TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                password_hash TEXT NOT NULL,
+                is_admin INTEGER NOT NULL DEFAULT 0,
+                created TEXT NOT NULL
+            )""", """
             CREATE TABLE IF NOT EXISTS vehicles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE COLLATE NOCASE
             )""", """
             CREATE TABLE IF NOT EXISTS battles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id),
                 date TEXT NOT NULL,
                 vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),
                 mode TEXT NOT NULL,
@@ -64,6 +77,7 @@ def create_tables(conn):
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts TEXT NOT NULL,
+                user_id INTEGER,
                 action TEXT NOT NULL,
                 battle_id INTEGER,
                 details TEXT
@@ -75,13 +89,48 @@ def init():
     """Створює таблиці, якщо їх ще немає."""
     with connect() as conn:
         if old_schema(conn):
-            raise RuntimeError("база у старому форматі: спершу python migrate.py")
+            raise RuntimeError("база у старому форматі: спершу python migrate.py ЛОГІН")
         create_tables(conn)
 
 
-def log_action(conn, action, battle_id=None, details=""):
-    conn.execute("INSERT INTO audit_log (ts, action, battle_id, details) VALUES (?, ?, ?, ?)",
-                 (datetime.now().isoformat(timespec="seconds"), action, battle_id, details))
+def now():
+    return datetime.now().isoformat(timespec="seconds")
+
+
+# ---- користувачі ----
+
+def add_user(login, password_hash, is_admin=False):
+    """Створює користувача, повертає id. Зайнятий логін: sqlite3.IntegrityError."""
+    with connect() as conn:
+        uid = conn.execute(
+            "INSERT INTO users (login, password_hash, is_admin, created) VALUES (?, ?, ?, ?)",
+            (login, password_hash, int(is_admin), now())).lastrowid
+        log_action(conn, uid, "register", None, login)
+        return uid
+
+
+def get_user(user_id):
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_user_by_login(login):
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE login = ?", (login,)).fetchone()
+    return dict(row) if row else None
+
+
+def set_admin(login, is_admin=True):
+    """Для тестів і CLI. Маршруту «зробити мене адміном» немає."""
+    with connect() as conn:
+        return conn.execute("UPDATE users SET is_admin = ? WHERE login = ?",
+                            (int(is_admin), login)).rowcount > 0
+
+
+def log_action(conn, user_id, action, battle_id=None, details=""):
+    conn.execute("INSERT INTO audit_log (ts, user_id, action, battle_id, details) "
+                 "VALUES (?, ?, ?, ?, ?)", (now(), user_id, action, battle_id, details))
 
 
 def vehicle_id(conn, name):
@@ -92,48 +141,57 @@ def vehicle_id(conn, name):
     return conn.execute("INSERT INTO vehicles (name) VALUES (?)", (name,)).lastrowid
 
 
-def load(vehicle=None):
-    """Повертає список Battle, за бажанням лише однієї техніки."""
+def load(user_id, vehicle=None):
+    """Бої користувача (список Battle), за бажанням лише однієї техніки.
+    user_id=None означає всі бої (лише для адмінки)."""
+    where, params = [], []
+    if user_id is not None:
+        where.append("b.user_id = ?")
+        params.append(user_id)
+    if vehicle is not None:
+        where.append("v.name = ?")
+        params.append(vehicle)
+    sql = SELECT_BATTLES
+    if where:
+        sql += " WHERE " + " AND ".join(where)   # склеюємо лише наші константи, значення через ?
     with connect() as conn:
-        if vehicle is None:
-            rows = conn.execute(SELECT_BATTLES + " ORDER BY b.date, b.id").fetchall()
-        else:
-            rows = conn.execute(SELECT_BATTLES + " WHERE v.name = ? ORDER BY b.date, b.id",
-                                (vehicle,)).fetchall()
+        rows = conn.execute(sql + " ORDER BY b.date, b.id", params).fetchall()
     return [Battle.from_row(row) for row in rows]
 
 
-def add(battle):
-    """Додає Battle і повертає його id."""
+def add(battle, user_id):
+    """Додає Battle від імені користувача і повертає його id."""
     with connect() as conn:
         vid = vehicle_id(conn, battle.vehicle)
         new_id = conn.execute(
-            "INSERT INTO battles (date, vehicle_id, mode, result, kills, minutes) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (battle.date, vid, battle.mode, battle.result, battle.kills, battle.minutes)).lastrowid
-        log_action(conn, "add", new_id, f"{battle.date} {battle.vehicle} {battle.result}")
+            "INSERT INTO battles (user_id, date, vehicle_id, mode, result, kills, minutes) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, battle.date, vid, battle.mode, battle.result,
+             battle.kills, battle.minutes)).lastrowid
+        log_action(conn, user_id, "add", new_id, f"{battle.date} {battle.vehicle} {battle.result}")
         return new_id
 
 
-def delete(battle_id):
-    """Видаляє бій. Повертає True, якщо такий був."""
+def delete(battle_id, user_id):
+    """Видаляє бій, лише якщо він належить користувачу. True, якщо видалено."""
     with connect() as conn:
-        deleted = conn.execute("DELETE FROM battles WHERE id = ?", (battle_id,)).rowcount > 0
+        deleted = conn.execute("DELETE FROM battles WHERE id = ? AND user_id = ?",
+                               (battle_id, user_id)).rowcount > 0
         if deleted:
-            log_action(conn, "delete", battle_id)
+            log_action(conn, user_id, "delete", battle_id)
         return deleted
 
 
-def delete_all():
-    """Видаляє всі бої. Повертає, скільки було видалено."""
+def delete_all(admin_id):
+    """Адмінка: видаляє всі бої всіх користувачів. Повертає кількість."""
     with connect() as conn:
         n = conn.execute("DELETE FROM battles").rowcount
-        log_action(conn, "delete_all", None, f"видалено {n}")
+        log_action(conn, admin_id, "delete_all", None, f"видалено {n}")
         return n
 
 
-def vehicle_report(month=None):
-    """Звіт через JOIN: по кожній техніці кількість боїв, перемог,
+def vehicle_report(user_id, month=None):
+    """Звіт через JOIN: по кожній техніці користувача кількість боїв, перемог,
     % перемог і середньо знищено. month у форматі 2026-11 (необов'язково)."""
     sql = """SELECT v.name AS vehicle,
                     COUNT(*) AS battles,
@@ -141,11 +199,12 @@ def vehicle_report(month=None):
                     ROUND(100.0 * SUM(b.result = 'перемога') / COUNT(*), 1) AS win_rate,
                     ROUND(AVG(b.kills), 2) AS average_kills
              FROM battles b
-             JOIN vehicles v ON v.id = b.vehicle_id"""
-    params = ()
+             JOIN vehicles v ON v.id = b.vehicle_id
+             WHERE b.user_id = ?"""
+    params = (user_id,)
     if month:
-        sql += " WHERE b.date LIKE ?"
-        params = (month + "-%",)
+        sql += " AND b.date LIKE ?"
+        params = (user_id, month + "-%")
     sql += " GROUP BY v.id ORDER BY battles DESC, v.name"
     with connect() as conn:
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
@@ -154,6 +213,7 @@ def vehicle_report(month=None):
 def load_log(limit=50):
     """Останні записи журналу дій, нові зверху."""
     with connect() as conn:
-        rows = conn.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?",
-                            (limit,)).fetchall()
+        rows = conn.execute("""SELECT a.*, u.login FROM audit_log a
+                               LEFT JOIN users u ON u.id = a.user_id
+                               ORDER BY a.id DESC LIMIT ?""", (limit,)).fetchall()
     return [dict(r) for r in rows]

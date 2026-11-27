@@ -12,6 +12,12 @@ echo "== віртуальне оточення і залежності"
 python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
 
+echo "== .env з ключем сесій"
+if [ ! -f .env ]; then
+    echo "SECRET_KEY=$(./venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(32))')" > .env
+    chmod 600 .env
+fi
+
 echo "== перевірка тестів"
 ./venv/bin/python -m pytest -q
 

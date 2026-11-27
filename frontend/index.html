@@ -37,12 +37,39 @@
     .empty { color: var(--muted); text-align: center; padding: 1.5rem 0; }
     .rates div { display: flex; justify-content: space-between; padding: .3rem 0;
                  border-bottom: 1px solid var(--line); }
+    .hidden { display: none !important; }
+    #auth form { grid-template-columns: 1fr 1fr; }
+    #auth .buttons { display: flex; gap: .6rem; grid-column: 1 / -1; }
+    #auth .buttons button { flex: 1; }
+    button.secondary { background: none; color: var(--accent); border: 1px solid var(--accent); }
+    .userbar { display: flex; justify-content: space-between; align-items: center;
+               margin: 0 0 1rem; color: var(--muted); }
+    .userbar b { color: var(--text); }
+    .userbar button { padding: .35rem .8rem; }
   </style>
 </head>
 <body>
 <main>
   <h1>Статистика боїв <span>War Thunder</span></h1>
-  <p class="sub">Мій особистий журнал боїв: техніка, перемоги, знищення.</p>
+  <p class="sub">Особистий журнал боїв: техніка, перемоги, знищення.</p>
+
+  <div id="auth" class="card hidden">
+    <form id="auth-form">
+      <label>Логін <input id="login" autocomplete="username" required minlength="3" maxlength="30"></label>
+      <label>Пароль <input id="password" type="password" autocomplete="current-password" required minlength="8"></label>
+      <div class="buttons">
+        <button id="btn-login" type="submit">Увійти</button>
+        <button id="btn-register" type="button" class="secondary">Зареєструватися</button>
+      </div>
+    </form>
+    <p id="auth-status"></p>
+  </div>
+
+  <div id="app" class="hidden">
+  <div class="userbar">
+    <span>Ви увійшли як <b id="who"></b></span>
+    <button id="btn-logout" class="secondary">Вийти</button>
+  </div>
 
   <div class="card">
     <form id="form">
@@ -77,10 +104,67 @@
       <tbody id="list"></tbody>
     </table>
   </div>
+  </div>
 </main>
 
 <script>
   const API = "https://api.prodachen.pp.ua";
+
+  // Усі запити до API з cookie сесії (credentials: "include"), інакше сервер не знає,
+  // хто ми, і відповідає 401. На сервері для цього CORS з supports_credentials=True.
+  async function api(path, options = {}) {
+    const response = await fetch(API + path, { credentials: "include", ...options });
+    if (response.status === 401 && !path.startsWith("/login") && !path.startsWith("/register")) {
+      showAuth("сесія закінчилась, увійдіть ще раз");
+      throw new Error("401");
+    }
+    return response;
+  }
+
+  function showAuth(message) {
+    document.getElementById("app").classList.add("hidden");
+    document.getElementById("auth").classList.remove("hidden");
+    const st = document.getElementById("auth-status");
+    st.textContent = message || "";
+    st.className = "err";
+  }
+
+  function showApp(user) {
+    document.getElementById("auth").classList.add("hidden");
+    document.getElementById("app").classList.remove("hidden");
+    document.getElementById("who").textContent = user.login;   // textContent, не innerHTML
+    document.getElementById("password").value = "";
+    refresh();
+  }
+
+  async function authenticate(path) {
+    const login = document.getElementById("login").value.trim();
+    const password = document.getElementById("password").value;
+    try {
+      const response = await api(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login, password }),
+      });
+      const data = await response.json();
+      if (response.ok) showApp(data);
+      else showAuth(data.error);
+    } catch (e) {
+      showAuth("не вдалося зв'язатися з сервером");
+    }
+  }
+
+  document.getElementById("auth-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    authenticate("/login");
+  });
+  document.getElementById("btn-register").addEventListener("click", () => {
+    if (document.getElementById("auth-form").reportValidity()) authenticate("/register");
+  });
+  document.getElementById("btn-logout").addEventListener("click", async () => {
+    try { await api("/logout", { method: "POST" }); } catch (e) {}
+    showAuth("");
+  });
 
   // Увесь текст з сервера виводиться ТІЛЬКИ через textContent, ніколи через innerHTML.
   // Інакше бій з технікою, у назві якої є HTML-тег script, виконав би код у браузері відвідувача (XSS).
@@ -99,7 +183,7 @@
   }
 
   async function loadBattles() {
-    const response = await fetch(API + "/battles");
+    const response = await api("/battles");
     const battles = await response.json();
     const list = document.getElementById("list");
     list.replaceChildren();
@@ -128,7 +212,7 @@
   }
 
   async function loadReport() {
-    const response = await fetch(API + "/report");
+    const response = await api("/report");
     const r = await response.json();
     document.getElementById("s-battles").textContent = r.battles;
     document.getElementById("s-avg").textContent = r.average_kills;
@@ -152,13 +236,14 @@
     try {
       await Promise.all([loadBattles(), loadReport()]);
     } catch (e) {
-      setStatus("не вдалося зв'язатися з сервером", false);
+      if (e.message !== "401") setStatus("не вдалося зв'язатися з сервером", false);
     }
   }
 
   async function deleteBattle(id) {
     if (!confirm("Видалити цей бій?")) return;
-    const response = await fetch(`${API}/battles/${id}`, { method: "DELETE" });
+    let response;
+    try { response = await api(`/battles/${id}`, { method: "DELETE" }); } catch (e) { return; }
     setStatus(response.ok ? "бій видалено" : "не вдалося видалити", response.ok);
     refresh();
   }
@@ -176,7 +261,7 @@
       minutes: document.getElementById("minutes").value,
     };
     try {
-      const response = await fetch(API + "/battles", {
+      const response = await api("/battles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -185,7 +270,7 @@
       setStatus(response.ok ? "бій додано" : "помилка: " + result.error, response.ok);
       if (response.ok) document.getElementById("kills").value = 0;
     } catch (e) {
-      setStatus("не вдалося зв'язатися з сервером", false);
+      if (e.message !== "401") setStatus("не вдалося зв'язатися з сервером", false);
     }
     button.disabled = false;
     refresh();
@@ -195,7 +280,17 @@
   const now = new Date();
   document.getElementById("date").value =
     `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  refresh();
+
+  // при відкритті сторінки: якщо cookie сесії живий, одразу показуємо бої
+  (async () => {
+    try {
+      const response = await fetch(API + "/me", { credentials: "include" });
+      if (response.ok) showApp(await response.json());
+      else showAuth("");
+    } catch (e) {
+      showAuth("не вдалося зв'язатися з сервером");
+    }
+  })();
 </script>
 </body>
 </html>
