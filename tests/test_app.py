@@ -157,3 +157,11 @@ def test_health_reports_db_error(app_module, tmp_path):
 
 def test_unknown_route(client):
     assert client.get("/nema").status_code == 404
+
+
+def test_vehicle_catalog_route(app_module):
+    c = app_module.app.test_client()                 # без входу
+    r = c.get("/vehicles/catalog?q=f/a-18")
+    assert r.status_code == 200
+    assert any(v["name"].startswith("F/A-18") for v in r.get_json())
+    assert c.get("/vehicles/catalog?q=" + "x" * 60).status_code == 400

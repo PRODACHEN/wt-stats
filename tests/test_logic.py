@@ -58,3 +58,23 @@ def test_battle_to_dict_and_is_win():
     d = B1.to_dict()
     assert d["vehicle"] == "F/A-18C" and d["kills"] == 4 and d["id"] is None
     assert B1.is_win() and not B2.is_win()
+
+
+# ---- довідник техніки ----
+import catalog
+
+
+def test_catalog_finds_leopards_with_br():
+    found = catalog.search("leopard 2a5")
+    names = [v["name"] for v in found]
+    assert "Leopard 2A5" in names
+    v = next(v for v in found if v["name"] == "Leopard 2A5")
+    assert set(v["br"]) == {"АБ", "РБ", "СБ"} and v["br"]["РБ"] > 10
+    assert v["nation"] and v["type"]
+
+
+def test_catalog_ignores_case_spaces_and_short_queries():
+    assert catalog.search("LEOPARD2A5") == catalog.search("leopard 2a5")
+    assert catalog.search("l") == []
+    assert catalog.search("zzzzzz") == []
+    assert len(catalog.search("leopard", limit=5)) == 5

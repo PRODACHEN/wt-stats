@@ -38,6 +38,16 @@
     .rates div { display: flex; justify-content: space-between; padding: .3rem 0;
                  border-bottom: 1px solid var(--line); }
     .hidden { display: none !important; }
+    /* підказки техніки під полем «Техніка» */
+    .ac { position: relative; grid-column: 1 / -1; }   /* на всю ширину: список читабельний і на телефоні */
+    .ac-list { position: absolute; top: 100%; left: 0; right: 0; z-index: 10; margin-top: 2px;
+               background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+               max-height: 300px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+    .ac-item { display: flex; justify-content: space-between; align-items: center; gap: .6rem;
+               padding: .45rem .6rem; cursor: pointer; color: var(--text); font-size: .9rem; }
+    .ac-item:hover, .ac-item.active { background: var(--line); }
+    .ac-item small { display: block; color: var(--muted); font-size: .75rem; }
+    .ac-br { color: var(--accent); font-weight: 600; white-space: nowrap; }
     #auth form { grid-template-columns: 1fr 1fr; }
     #auth .buttons { display: flex; gap: .6rem; grid-column: 1 / -1; }
     #auth .buttons button { flex: 1; }
@@ -74,7 +84,10 @@
   <div class="card">
     <form id="form">
       <label>Дата <input id="date" type="date" required></label>
-      <label>Техніка <input id="vehicle" placeholder="F/A-18C" required maxlength="40"></label>
+      <label class="ac">Техніка
+        <input id="vehicle" placeholder="почніть вводити: Leopard, F/A-18…" required maxlength="40" autocomplete="off">
+        <div id="vehicle-list" class="ac-list hidden"></div>
+      </label>
       <label>Режим
         <select id="mode"><option>РБ</option><option>АБ</option><option>СБ</option></select>
       </label>
@@ -275,6 +288,76 @@
     button.disabled = false;
     refresh();
   });
+
+  // ---- підказки техніки з БР: GET /vehicles/catalog?q=... ----
+  const vehicleInput = document.getElementById("vehicle");
+  const vehicleList = document.getElementById("vehicle-list");
+  const modeSelect = document.getElementById("mode");
+  let suggestions = [], activeIndex = -1, timer = null, lastQuery = "";
+
+  function renderSuggestions() {
+    vehicleList.replaceChildren();
+    if (suggestions.length === 0) { vehicleList.classList.add("hidden"); return; }
+    const mode = modeSelect.value;                       // БР для вибраного режиму
+    suggestions.forEach((v, i) => {
+      const item = document.createElement("div");
+      item.className = "ac-item" + (i === activeIndex ? " active" : "");
+      const left = document.createElement("div");
+      left.textContent = v.name;                         // лише textContent: захист від XSS
+      const meta = document.createElement("small");
+      meta.textContent = [v.nation, v.type].filter(Boolean).join(" · ");
+      left.appendChild(meta);
+      const right = document.createElement("span");
+      right.className = "ac-br";
+      right.textContent = `БР ${v.br[mode].toFixed(1)}`;
+      item.append(left, right);
+      // mousedown, а не click: інакше поле встигне втратити фокус і список зникне
+      item.addEventListener("mousedown", (e) => { e.preventDefault(); chooseVehicle(i); });
+      vehicleList.appendChild(item);
+    });
+    vehicleList.classList.remove("hidden");
+  }
+
+  function chooseVehicle(i) {
+    vehicleInput.value = suggestions[i].name;
+    suggestions = []; activeIndex = -1;
+    renderSuggestions();
+  }
+
+  async function loadSuggestions(q) {
+    lastQuery = q;
+    try {
+      const response = await fetch(`${API}/vehicles/catalog?q=${encodeURIComponent(q)}`);
+      const data = await response.json();
+      if (q !== lastQuery) return;                       // поки чекали, ввели щось нове
+      suggestions = response.ok ? data : [];
+    } catch (e) {
+      suggestions = [];
+    }
+    activeIndex = -1;
+    renderSuggestions();
+  }
+
+  vehicleInput.addEventListener("input", () => {
+    clearTimeout(timer);
+    const q = vehicleInput.value.trim();
+    if (q.length < 2) { suggestions = []; renderSuggestions(); return; }
+    timer = setTimeout(() => loadSuggestions(q), 200);   // не смикаємо сервер на кожну літеру
+  });
+  vehicleInput.addEventListener("keydown", (e) => {
+    if (suggestions.length === 0) return;
+    if (e.key === "ArrowDown") { activeIndex = (activeIndex + 1) % suggestions.length; }
+    else if (e.key === "ArrowUp") { activeIndex = (activeIndex - 1 + suggestions.length) % suggestions.length; }
+    else if (e.key === "Enter" && activeIndex >= 0) { chooseVehicle(activeIndex); }
+    else if (e.key === "Escape") { suggestions = []; }
+    else return;
+    e.preventDefault();
+    renderSuggestions();
+  });
+  vehicleInput.addEventListener("blur", () => setTimeout(() => {
+    suggestions = []; renderSuggestions();
+  }, 150));
+  modeSelect.addEventListener("change", renderSuggestions);
 
   // сьогоднішня дата за місцевим часом (valueAsDate брав би UTC і після 22:00 ставив би вчора)
   const now = new Date();

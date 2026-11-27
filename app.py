@@ -13,6 +13,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 
 import storage
 import logic
+import catalog
 
 load_dotenv()                          # читає .env з поточної теки (у git його немає)
 
@@ -44,6 +45,21 @@ def health():
         return jsonify({"status": "ok"})
     except Exception:
         return jsonify({"status": "db_error"}), 503
+
+
+# ---- довідник техніки (без входу: це дані гри, а не користувача) ----
+
+@app.get("/vehicles/catalog")
+def vehicles_catalog():
+    """?q=leopard -> до 20 машин з назвою, нацією, типом і БР для АБ/РБ/СБ."""
+    q = request.args.get("q", "")
+    if len(q) > 50:
+        return jsonify({"error": "занадто довгий запит"}), 400
+    try:
+        limit = max(1, min(int(request.args.get("limit", 20)), 30))
+    except ValueError:
+        return jsonify({"error": "limit має бути числом"}), 400
+    return jsonify(catalog.search(q, limit))
 
 
 # ---- користувачі і сесії ----

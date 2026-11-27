@@ -33,6 +33,7 @@
 | DELETE | /battles/<id>              | видалити бій               |
 | GET    | /report                    | звіт                       |
 | GET    | /report/vehicles?month=2026-11 | звіт по техніці (JOIN), місяць необов'язковий |
+| GET    | /vehicles/catalog?q=leopard | довідник техніки гри з БР (без входу) |
 
 Приклади curl:
 
@@ -76,6 +77,13 @@ DELETE неіснуючого id дає 404.
     python cli.py delete 1
     python cli.py log
     python cli.py -u ЛОГІН list      (від імені іншого користувача; без -u перший адмін)
+
+## Довідник техніки з БР
+
+У полі «Техніка» на сайті під час введення з'являються підказки: назва, нація, тип і БР
+для вибраного режиму (АБ/РБ/СБ). Дані: `vehicles.json` (~3400 машин), зібраний скриптом
+`tools/build_vehicles.py` з публічного датамайну гри (github.com/gszabi99/War-Thunder-Datamine):
+БР = economicRank / 3 + 1. Після оновлення гри: перезібрати файл і закомітити.
 
 ## Тести (pytest)
 
