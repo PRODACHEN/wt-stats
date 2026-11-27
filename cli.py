@@ -4,6 +4,7 @@ python cli.py list
 python cli.py find "F/A-18C"
 python cli.py report
 python cli.py delete 3        (3 це id з команди list)
+python cli.py log             (журнал дій)
 """
 
 import sys
@@ -15,12 +16,13 @@ USAGE = ("використання:\n"
          "  python cli.py list\n"
          "  python cli.py find ТЕХНІКА\n"
          "  python cli.py report\n"
-         "  python cli.py delete ID")
+         "  python cli.py delete ID\n"
+         "  python cli.py log")
 
 
 def print_battle(r):
-    print(f"{r['id']:>3}. {r['date']}  {r['vehicle']:<14} {r['mode']:<3} "
-          f"{r['result']:<9} знищено: {r['kills']:<3} {r['minutes']:g} хв")
+    print(f"{r.id:>3}. {r.date}  {r.vehicle:<14} {r.mode:<3} "
+          f"{r.result:<9} знищено: {r.kills:<3} {r.minutes:g} хв")
 
 
 def main():
@@ -70,8 +72,11 @@ def main():
         for vehicle, rate in logic.win_rate_by_vehicle(records).items():
             print(f"  {vehicle:<14} {rate:>5}%")
         best = logic.best_battle(records)
-        print(f"Найкращий бій: {best['date']}, {best['vehicle']}, "
-              f"знищено {best['kills']}")
+        print(f"Найкращий бій: {best.date}, {best.vehicle}, знищено {best.kills}")
+        print("По техніці (звіт через JOIN):")
+        for row in storage.vehicle_report():
+            print(f"  {row['vehicle']:<14} боїв {row['battles']:<3} "
+                  f"перемог {row['win_rate']}%  сер. знищено {row['average_kills']}")
 
     elif command == "delete":
         try:
@@ -83,6 +88,10 @@ def main():
             print("видалено бій", battle_id)
         else:
             print("бою з таким id немає")
+
+    elif command == "log":
+        for row in storage.load_log(20):
+            print(f"{row['ts']}  {row['action']:<10} {row['battle_id'] or '':<4} {row['details'] or ''}")
 
     else:
         print("невідома команда:", command)

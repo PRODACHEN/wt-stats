@@ -13,7 +13,7 @@ python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
 
 echo "== перевірка тестів"
-./venv/bin/python tests.py
+./venv/bin/python -m pytest -q
 
 echo "== служба systemd (USERNAME -> $USER)"
 sed "s/USERNAME/$USER/g" deploy/wt-stats.service | sudo tee /etc/systemd/system/wt-stats.service > /dev/null

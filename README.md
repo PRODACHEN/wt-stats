@@ -28,6 +28,7 @@
 | POST   | /battles                   | додати бій (JSON)          |
 | DELETE | /battles/<id>              | видалити бій               |
 | GET    | /report                    | звіт                       |
+| GET    | /report/vehicles?month=2026-11 | звіт по техніці (JOIN), місяць необов'язковий |
 
 Приклади curl:
 
@@ -44,6 +45,7 @@
 | GET    | /admin/export    | вивантажити всі бої (JSON)        |
 | POST   | /admin/import    | завантажити масив боїв (JSON)     |
 | DELETE | /admin/battles   | видалити всі бої                  |
+| GET    | /admin/log?limit=50 | журнал дій (нові зверху)       |
 
     curl -H "X-Admin-Token: ТОКЕН" http://127.0.0.1:8000/admin/export
 
@@ -57,12 +59,39 @@ DELETE неіснуючого id дає 404.
     python cli.py find "F/A-18C"
     python cli.py report
     python cli.py delete 1
-    python tests.py
+    python cli.py log
 
-## Дані
+## Тести (pytest)
 
-База SQLite data.db, таблиця battles:
-id, date, vehicle, mode, result, kills, minutes.
+    python -m pytest -v
+
+tests/test_logic.py перевіряє logic.py і клас Battle, tests/test_app.py перевіряє
+маршрути Flask через тестовий клієнт. Кожен тест маршрутів працює на своїй
+порожній базі (DB_PATH у тимчасовій теці), ваші дані в data.db не чіпаються.
+
+## Дані (лаба 11)
+
+Запис бою представлений класом `Battle` (models.py). Словники лише на межі:
+`to_dict()` для JSON, `Battle.from_row()` з бази. logic.py працює з об'єктами.
+
+База SQLite data.db (`PRAGMA foreign_keys = ON` при кожному підключенні):
+
+    vehicles(id, name UNIQUE)
+    battles(id, date, vehicle_id -> vehicles.id, mode, result, kills, minutes)
+    audit_log(id, ts, action, battle_id, details)   -- кожне додавання і видалення
+
+Звіт через JOIN (storage.vehicle_report, маршрут /report/vehicles):
+
+    SELECT v.name, COUNT(*), SUM(b.result = 'перемога'), AVG(b.kills)
+    FROM battles b JOIN vehicles v ON v.id = b.vehicle_id
+    WHERE b.date LIKE '2026-11-%' GROUP BY v.id;
+
+Перехід зі старої схеми (vehicle текстом у battles): `migrate.py`, одна транзакція,
+кількість боїв до і після звіряється. Запускався один раз, лежить у репозиторії
+як документ того, що сталося з базою.
+
+Розгортання лаби 11 на сервері: `git pull && bash deploy/lab11.sh`
+(бекап, міграція, тести, перезапуск, перевірки).
 
 ## Розгортання (Google Cloud, Ubuntu 24.04)
 

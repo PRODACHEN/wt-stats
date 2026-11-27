@@ -2,13 +2,14 @@
 функції лише обчислюють і повертають результат."""
 
 from datetime import date as _date
+from models import Battle
 
 MODES = ("АБ", "РБ", "СБ")          # аркадні, реалістичні, симуляторні бої
 RESULTS = ("перемога", "поразка")
 
 
 def make_record(date, vehicle, mode, result, kills, minutes):
-    """Перевіряє поля і повертає готовий запис-словник.
+    """Перевіряє поля і повертає готовий об'єкт Battle.
     Якщо щось не так, кидає ValueError з поясненням."""
     try:
         _date.fromisoformat(date)
@@ -43,14 +44,13 @@ def make_record(date, vehicle, mode, result, kills, minutes):
     if minutes <= 0:
         raise ValueError("тривалість має бути більшою за 0")
 
-    return {"date": date, "vehicle": vehicle, "mode": mode,
-            "result": result, "kills": kills, "minutes": minutes}
+    return Battle(date, vehicle, mode, result, kills, minutes)
 
 
 def find_by_vehicle(records, vehicle):
     """Бої на конкретній техніці (без різниці великих і малих літер)."""
     vehicle = vehicle.strip().lower()
-    return [r for r in records if r["vehicle"].lower() == vehicle]
+    return [r for r in records if r.vehicle.lower() == vehicle]
 
 
 def win_rate_by_vehicle(records):
@@ -58,9 +58,9 @@ def win_rate_by_vehicle(records):
     battles = {}
     wins = {}
     for r in records:
-        v = r["vehicle"]
+        v = r.vehicle
         battles[v] = battles.get(v, 0) + 1
-        if r["result"] == "перемога":
+        if r.is_win():
             wins[v] = wins.get(v, 0) + 1
     return {v: round(wins.get(v, 0) * 100 / battles[v], 1) for v in battles}
 
@@ -69,11 +69,19 @@ def average_kills(records):
     """Середня кількість знищених за бій. Для порожнього списку 0."""
     if len(records) == 0:
         return 0
-    return round(sum(r["kills"] for r in records) / len(records), 2)
+    return round(sum(r.kills for r in records) / len(records), 2)
+
+
+def kills_by_mode(records):
+    """Повертає {режим: усього знищено}."""
+    totals = {}
+    for r in records:
+        totals[r.mode] = totals.get(r.mode, 0) + r.kills
+    return totals
 
 
 def best_battle(records):
     """Бій з найбільшою кількістю знищених, або None, якщо боїв немає."""
     if len(records) == 0:
         return None
-    return max(records, key=lambda r: r["kills"])
+    return max(records, key=lambda r: r.kills)

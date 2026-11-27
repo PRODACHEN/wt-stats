@@ -2,6 +2,7 @@
 Далі у браузері: http://127.0.0.1:5000/battles"""
 
 import os
+from datetime import date
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, abort
 from flask_cors import CORS
@@ -26,7 +27,7 @@ FIELDS = ("date", "vehicle", "mode", "result", "kills", "minutes")
 @app.get("/battles")
 def list_battles():
     vehicle = request.args.get("vehicle")        # ?vehicle=F/A-18C або None
-    return jsonify(storage.load(vehicle))
+    return jsonify([b.to_dict() for b in storage.load(vehicle)])
 
 
 @app.post("/battles")
@@ -55,12 +56,26 @@ def delete_battle(battle_id):
 @app.get("/report")
 def report():
     records = storage.load()
+    best = logic.best_battle(records)
     return jsonify({
         "battles": len(records),
         "average_kills": logic.average_kills(records),
         "win_rate_by_vehicle": logic.win_rate_by_vehicle(records),
-        "best_battle": logic.best_battle(records),
+        "kills_by_mode": logic.kills_by_mode(records),
+        "best_battle": best.to_dict() if best else None,
     })
+
+
+@app.get("/report/vehicles")
+def report_vehicles():
+    """Звіт через JOIN battles + vehicles. ?month=2026-11 (необов'язково)."""
+    month = request.args.get("month")
+    if month is not None:
+        try:
+            date.fromisoformat(month + "-01")
+        except ValueError:
+            return jsonify({"error": "month має бути у форматі РРРР-ММ"}), 400
+    return jsonify(storage.vehicle_report(month))
 
 
 # ---- адміністративні маршрути (масові зміни даних) ----
@@ -82,7 +97,17 @@ def require_admin():
 @app.get("/admin/export")
 def admin_export():
     require_admin()
-    return jsonify(storage.load())
+    return jsonify([b.to_dict() for b in storage.load()])
+
+
+@app.get("/admin/log")
+def admin_log():
+    require_admin()
+    try:
+        limit = int(request.args.get("limit", 50))
+    except ValueError:
+        return jsonify({"error": "limit має бути числом"}), 400
+    return jsonify(storage.load_log(max(1, min(limit, 500))))
 
 
 @app.post("/admin/import")

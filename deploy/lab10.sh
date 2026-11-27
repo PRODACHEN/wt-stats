@@ -17,7 +17,7 @@ else
 fi
 
 echo "== тести"
-./venv/bin/python tests.py
+./venv/bin/python -m pytest -q
 
 echo "== nginx: /admin/ з інтернету -> 404"
 # Робочий конфіг НЕ перезаписуємо (у ньому блоки certbot з HTTPS), лише перевіряємо.
