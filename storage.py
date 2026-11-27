@@ -21,8 +21,11 @@ SELECT_BATTLES = """SELECT b.id, b.date, v.name AS vehicle, b.mode, b.result,
 
 def db_path():
     # Шлях береться в момент підключення: тести підставляють свою базу
-    # через змінну оточення DB_PATH перед кожним тестом.
-    return os.environ.get("DB_PATH", "data.db")
+    # через змінну оточення DB_PATH перед кожним тестом. У Docker DB_PATH=/data/data.db.
+    # Без DB_PATH: data/data.db, якщо є тека data (сервер, лаба 13), інакше data.db.
+    if "DB_PATH" in os.environ:
+        return os.environ["DB_PATH"]
+    return os.path.join("data", "data.db") if os.path.isdir("data") else "data.db"
 
 
 @contextmanager

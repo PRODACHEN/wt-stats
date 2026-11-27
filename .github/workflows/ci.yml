@@ -1,0 +1,32 @@
+name: ci
+on:
+  push:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -v
+
+  deploy:
+    needs: test                     # тести впали: деплою не буде
+    runs-on: self-hosted            # runner на сервері wt-stats у Google Cloud
+    steps:
+      - name: Оновити сервіс
+        working-directory: /home/minitransport15/wt-stats
+        run: |
+          git pull --ff-only
+          docker compose up -d --build
+      - name: Перевірити /health
+        run: |
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS http://127.0.0.1:8000/health; then echo; exit 0; fi
+            sleep 3
+          done
+          echo "сервіс не відповідає"; exit 1

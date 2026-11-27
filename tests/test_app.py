@@ -144,5 +144,16 @@ def test_audit_log_has_user(client, app_module):
     assert all(row["login"] == "nikita" and row["user_id"] for row in log)
 
 
+def test_health_without_login(app_module):
+    r = app_module.app.test_client().get("/health")
+    assert r.status_code == 200 and r.get_json() == {"status": "ok"}
+
+
+def test_health_reports_db_error(app_module, tmp_path):
+    os.environ["DB_PATH"] = str(tmp_path / "nema" / "x.db")     # тека не існує
+    r = app_module.app.test_client().get("/health")
+    assert r.status_code == 503 and r.get_json()["status"] == "db_error"
+
+
 def test_unknown_route(client):
     assert client.get("/nema").status_code == 404

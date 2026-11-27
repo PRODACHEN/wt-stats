@@ -5,7 +5,10 @@ import os
 import sqlite3
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-DB = os.path.join(BASE, "data.db")
+# з лаби 13 база лежить у data/ (це том Docker-контейнера)
+DB = os.path.join(BASE, "data", "data.db")
+if not os.path.exists(DB):
+    DB = os.path.join(BASE, "data.db")
 BACKUPS = os.path.join(BASE, "backups")
 KEEP_DAYS = 14
 

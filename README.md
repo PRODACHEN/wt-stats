@@ -115,14 +115,61 @@ ADMIN_TOKEN з .env видаляється, міграція з паролем, 
 
 Першого адміністратора призначають вручну, маршруту «зробити мене адміном» немає:
 
-    sqlite3 data.db "UPDATE users SET is_admin = 1 WHERE login = 'ЛОГІН';"
+    sqlite3 data/data.db "UPDATE users SET is_admin = 1 WHERE login = 'ЛОГІН';"
 
 Сесія: підписаний cookie Flask (ключ SECRET_KEY у .env), Secure, HttpOnly, SameSite=Lax.
 Фронтенд на prodachen.pp.ua, API на api.prodachen.pp.ua: CORS з supports_credentials=True
 і `credentials: "include"` у кожному fetch. SESSION_COOKIE_DOMAIN не задається, тому cookie
 працює і на адресі Tailscale.
 
-## Розгортання (Google Cloud, Ubuntu 24.04)
+## Запуск сервера (лаба 13: Docker, GitHub Actions, моніторинг)
+
+Сервер: Google Cloud e2-micro, Ubuntu 24.04, тека `~/wt-stats`. Це окрема робоча копія
+лише для сервісу: код я пишу на ноутбуці, на сервер він потрапляє тільки через git.
+
+    Cloudflare -> nginx :443 -> 127.0.0.1:8000 -> Docker-контейнер (gunicorn, app:app)
+    Tailscale serve :8443 ----^                     база: ./data/data.db (том /data)
+
+- `Dockerfile`: python:3.12-slim, залежності, gunicorn на 0.0.0.0:8000 усередині контейнера.
+- `compose.yaml`: порт лише на 127.0.0.1:8000 сервера, `restart: always`, `.env` з SECRET_KEY,
+  том `./data:/data` (база переживає `docker compose down && docker compose up -d --build`).
+- `.dockerignore`: venv, .git, бази, .env, backups, data, tests, frontend не потрапляють в образ.
+- nginx і `tailscale serve` не змінились: вони як і раніше ходять на 127.0.0.1:8000.
+
+Перехід із systemd на Docker (один раз): `git pull && bash deploy/lab13.sh`.
+
+Корисне:
+
+    docker compose ps                  # стан
+    docker compose logs -f api         # логи
+    docker compose restart api
+    docker compose exec api python cli.py log
+    sqlite3 data/data.db "UPDATE users SET is_admin = 1 WHERE login = 'ЛОГІН';"
+
+### Автоматичні тести і деплой
+
+`.github/workflows/ci.yml`: на кожен push у master GitHub запускає pytest на своїй машині
+(job test). Якщо тести зелені, job deploy виконується на self-hosted runner на сервері:
+`git pull` у `~/wt-stats`, `docker compose up -d --build` і перевірка `/health`.
+Червоний тест блокує деплой (`needs: test`).
+
+Runner (Settings → Actions → Runners → New self-hosted runner → Linux x64) стоїть у
+`~/actions-runner` на сервері, поза текою проєкту, і працює як служба:
+`sudo ./svc.sh install && sudo ./svc.sh start`. Стан: `sudo ./svc.sh status`.
+
+Безпека runner: репозиторій публічний (портфоліо), тому в Settings → Actions → General
+увімкнено «Require approval for all external contributors»; workflow з чужих pull request
+не схвалюю.
+
+### Моніторинг
+
+`GET /health` без входу: `{"status": "ok"}` або 503 `{"status": "db_error"}`, якщо база не відповідає.
+UptimeRobot, монітор HTTP(s) на https://api.prodachen.pp.ua/health кожні 5 хвилин,
+сповіщення на email. Кеш Cloudflare для api.prodachen.pp.ua вимкнений (Bypass cache),
+тож монітор бачить сервер, а не кеш. Перевірено: `docker compose stop` → лист про падіння,
+`docker compose start` → лист про відновлення.
+
+## Розгортання до лаби 13 (історія: systemd + gunicorn)
 
 Машина e2-micro, регіон us-central1, статичний IP, галочки HTTP/HTTPS.
 На сервері:
@@ -183,7 +230,7 @@ HTTPS:
 Блокування адрес: Cloudflare, Security → WAF → Custom rules, IP Source Address equals ... → Block.
 ssh захищений fail2ban (5 помилок за 10 хв → бан на годину).
 
-Резервні копії: `backup.py` щодня о 20:00 через cron,
+Резервні копії: `backup.py` (бере базу з data/, якщо вона там) щодня о 20:00 через cron,
 копії в `backups/` (не в git), зберігаються 14 днів. Відновлення перевірено:
 
     python -c "import sqlite3; print(sqlite3.connect('backups/data-2026-11-27.db').execute('SELECT COUNT(*) FROM battles').fetchone())"
@@ -196,7 +243,8 @@ ssh захищений fail2ban (5 помилок за 10 хв → бан на �
 |---------|---------------|------|
 | SQL-ін'єкція | пошук `'; DROP TABLE battles; --` у tests.py | закрито: параметри `?` у всіх запитах |
 | XSS у фронтенді | бій з vehicle = `<img src=x onerror=alert(1)>` | закрито: дані виводяться через textContent |
-| сервер розробки в інтернеті | служба systemd запускає gunicorn | закрито: debug=True лише при `python app.py` локально |
+| сервер розробки в інтернеті | контейнер запускає gunicorn | закрито: debug=True лише при `python app.py` локально |
+| код з чужого pull request на runner | Settings → Actions → General | закрито: схвалення для всіх зовнішніх контриб'юторів |
 | доступ в обхід Cloudflare | `curl http://IP_СЕРВЕРА` ззовні не відповідає | закрито: ufw пускає 80/443 лише з адрес Cloudflare, gunicorn слухає 127.0.0.1 |
 | флуд запитами | 100 POST у циклі через https://api... | закрито: rate limiting у Cloudflare на /battles |
 | підбір пароля ssh | `sudo fail2ban-client status sshd` | закрито: fail2ban |

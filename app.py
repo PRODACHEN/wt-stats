@@ -1,6 +1,6 @@
 """Вебсервіс статистики боїв. Запуск локально: python app.py
 Далі у браузері: http://127.0.0.1:5000/battles (спершу /register або /login).
-На сервері працює gunicorn (deploy/wt-stats.service)."""
+На сервері працює в Docker-контейнері (Dockerfile, compose.yaml), gunicorn усередині."""
 
 import os
 import sqlite3
@@ -31,6 +31,19 @@ app.json.ensure_ascii = False            # кирилиця в JSON як є, а 
 storage.init()
 
 FIELDS = ("date", "vehicle", "mode", "result", "kills", "minutes")
+
+
+# ---- моніторинг ----
+
+@app.get("/health")
+def health():
+    """Без входу і без даних: його опитує UptimeRobot. Перевіряє, що база відповідає."""
+    try:
+        with storage.connect() as conn:
+            conn.execute("SELECT COUNT(*) FROM users").fetchone()
+        return jsonify({"status": "ok"})
+    except Exception:
+        return jsonify({"status": "db_error"}), 503
 
 
 # ---- користувачі і сесії ----
@@ -232,4 +245,4 @@ def wrong_method(e):
 
 if __name__ == "__main__":
     app.config["SESSION_COOKIE_SECURE"] = False   # локально без HTTPS
-    app.run(debug=True)                  # лише локально; на сервері працює gunicorn
+    app.run(debug=True)                  # лише локально; на сервері gunicorn у Docker
