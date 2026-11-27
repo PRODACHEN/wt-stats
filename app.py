@@ -1,10 +1,15 @@
 """Вебсервіс статистики боїв. Запуск: python app.py
 Далі у браузері: http://127.0.0.1:5000/battles"""
 
-from flask import Flask, request, jsonify
+import os
+from dotenv import load_dotenv
+from flask import Flask, request, jsonify, abort
 from flask_cors import CORS
 import storage
 import logic
+
+load_dotenv()                          # читає .env з поточної теки (у git його немає)
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN")
 
 app = Flask(__name__)
 
@@ -58,6 +63,58 @@ def report():
     })
 
 
+# ---- адміністративні маршрути (масові зміни даних) ----
+# Захист у три шари:
+#  1) nginx не пропускає /admin/ з інтернету взагалі (deploy/nginx.conf);
+#  2) Flask відхиляє запит, що прийшов через Cloudflare (є CF-Connecting-IP);
+#  3) Flask вимагає токен з .env у заголовку X-Admin-Token.
+# Доступ до адмінки: з самого сервера (127.0.0.1:8000) або через Tailscale.
+
+def require_admin():
+    # Cloudflare додає CF-Connecting-IP до кожного запиту, що пройшов через нього,
+    # і прибрати його ззовні неможливо. Є заголовок, отже запит з інтернету.
+    if "CF-Connecting-IP" in request.headers:
+        abort(404)
+    if not ADMIN_TOKEN or request.headers.get("X-Admin-Token") != ADMIN_TOKEN:
+        abort(403)
+
+
+@app.get("/admin/export")
+def admin_export():
+    require_admin()
+    return jsonify(storage.load())
+
+
+@app.post("/admin/import")
+def admin_import():
+    require_admin()
+    data = request.get_json(silent=True)
+    if not isinstance(data, list):
+        return jsonify({"error": "очікується JSON-масив боїв"}), 400
+    records = []
+    for i, item in enumerate(data):
+        if not isinstance(item, dict) or any(f not in item for f in FIELDS):
+            return jsonify({"error": f"запис {i}: бракує полів"}), 400
+        try:
+            records.append(logic.make_record(*(item[f] for f in FIELDS)))
+        except ValueError as e:
+            return jsonify({"error": f"запис {i}: {e}"}), 400
+    for r in records:                    # спершу перевіряємо все, потім пишемо
+        storage.add(r)
+    return jsonify({"imported": len(records)}), 201
+
+
+@app.delete("/admin/battles")
+def admin_delete_all():
+    require_admin()
+    return jsonify({"deleted": storage.delete_all()})
+
+
+@app.errorhandler(403)
+def forbidden(e):
+    return jsonify({"error": "доступ заборонено"}), 403
+
+
 @app.errorhandler(404)
 def not_found(e):
     return jsonify({"error": "такого маршруту немає"}), 404
@@ -69,4 +126,4 @@ def wrong_method(e):
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True)                  # лише локально; на сервері працює gunicorn

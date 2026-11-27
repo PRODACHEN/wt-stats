@@ -63,3 +63,9 @@ def delete(battle_id):
     with connect() as conn:
         cur = conn.execute("DELETE FROM battles WHERE id = ?", (battle_id,))
         return cur.rowcount > 0
+
+
+def delete_all():
+    """Видаляє всі бої. Повертає, скільки було видалено."""
+    with connect() as conn:
+        return conn.execute("DELETE FROM battles").rowcount

@@ -37,6 +37,16 @@
     curl -X DELETE http://127.0.0.1:5000/battles/1
     curl -i http://127.0.0.1:5000/report
 
+Адміністративні маршрути (лише з сервера або через Tailscale, з токеном):
+
+| Метод  | Маршрут          | Що робить                         |
+|--------|------------------|-----------------------------------|
+| GET    | /admin/export    | вивантажити всі бої (JSON)        |
+| POST   | /admin/import    | завантажити масив боїв (JSON)     |
+| DELETE | /admin/battles   | видалити всі бої                  |
+
+    curl -H "X-Admin-Token: ТОКЕН" http://127.0.0.1:8000/admin/export
+
 Помилки: POST без тіла або з текстом замість числа дає 400,
 DELETE неіснуючого id дає 404.
 
@@ -93,3 +103,44 @@ HTTPS:
 
 Локальна перевірка фронтенду: python -m http.server 8080 у теці frontend/,
 у app.py тимчасово додати "http://localhost:8080" до origins.
+
+## Безпека (лаба 10)
+
+Секрети: токен адміна лежить у `.env` (його немає в git, шаблон `.env.example`).
+Створити: `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+Перевірка, що секрет не витік: `git log -p | grep -i token` порожнє.
+
+Адмінка захищена трьома шарами:
+1. nginx відповідає 404 на `/admin/` з інтернету (`deploy/nginx.conf`);
+2. Flask відповідає 404, якщо є заголовок `CF-Connecting-IP` (запит прийшов через Cloudflare);
+3. Flask вимагає заголовок `X-Admin-Token` з `.env`, інакше 403.
+
+Доступ до адмінки з телефона/ноутбука: Tailscale на сервері
+(`sudo tailscale up`, потім `sudo tailscale serve --bg 8000`), адреса `https://...ts.net`
+видна лише з моїх пристроїв у Tailscale.
+
+Блокування адрес: Cloudflare, Security → WAF → Custom rules, IP Source Address equals ... → Block.
+ssh захищений fail2ban (5 помилок за 10 хв → бан на годину).
+
+Резервні копії: `backup.py` щодня о 20:00 через cron (`deploy/lab10.sh` додає рядок),
+копії в `backups/` (не в git), зберігаються 14 днів. Відновлення перевірено:
+
+    python -c "import sqlite3; print(sqlite3.connect('backups/data-2026-11-27.db').execute('SELECT COUNT(*) FROM battles').fetchone())"
+
+Розгортання змін лаби 10 на сервері: `git pull && bash deploy/lab10.sh`.
+
+### Аудит
+
+| Загроза | Як перевірено | Стан |
+|---------|---------------|------|
+| SQL-ін'єкція | пошук `'; DROP TABLE battles; --` у tests.py | закрито: параметри `?` у всіх запитах |
+| XSS у фронтенді | бій з vehicle = `<img src=x onerror=alert(1)>` | закрито: дані виводяться через textContent |
+| сервер розробки в інтернеті | служба systemd запускає gunicorn | закрито: debug=True лише при `python app.py` локально |
+| доступ в обхід Cloudflare | `curl http://IP_СЕРВЕРА` ззовні не відповідає | закрито: ufw пускає 80/443 лише з адрес Cloudflare, gunicorn слухає 127.0.0.1 |
+| флуд запитами | 100 POST у циклі через https://api... | закрито: rate limiting у Cloudflare на /battles |
+| підбір пароля ssh | `sudo fail2ban-client status sshd` | закрито: fail2ban |
+| адмінка з інтернету | https://api.prodachen.pp.ua/admin/export з телефона → 404; з Tailscale без токена → 403 | закрито: nginx, CF-Connecting-IP, токен |
+| секрети в git | `git log -p \| grep -i token`; `git log --all --name-only \| grep env$` | закрито: .env у .gitignore |
+| втрата даних | видалити копію data.db, відновити з backups/ | закрито: backup.py за розкладом; раз на тиждень копіюю бекап на ноутбук (`scp`) |
+| вразливі бібліотеки | `pip install pip-audit`, `pip-audit -r requirements.txt` | перевіряю, оновлюю версії в requirements.txt |
+| видалення одного бою без входу | DELETE /battles/<id> з фронтенду | відкрито: прийнятно, поки сервіс лише мій; закриється в лабі 12 (користувачі й права) |

@@ -62,6 +62,7 @@ assert storage.load("'; DROP TABLE battles; --") == []
 assert len(storage.load()) == 2
 
 # ---- app.py (через тестовий клієнт Flask, без запуску сервера) ----
+os.environ["ADMIN_TOKEN"] = "test-token"     # load_dotenv не перезапише це значення
 import app as webapp
 client = webapp.app.test_client()
 
@@ -82,6 +83,21 @@ assert client.get("/report").get_json()["battles"] == 3
 assert client.delete(f"/battles/{new_id}").status_code == 200
 assert client.delete("/battles/99999").status_code == 404
 assert client.get("/nema").status_code == 404
+
+# ---- адмінка: токен і заголовок Cloudflare ----
+T = {"X-Admin-Token": "test-token"}
+assert client.get("/admin/export").status_code == 403                    # без токена
+assert client.get("/admin/export", headers={"X-Admin-Token": "ні"}).status_code == 403
+assert client.get("/admin/export", headers={**T, "CF-Connecting-IP": "1.2.3.4"}).status_code == 404
+exported = client.get("/admin/export", headers=T)
+assert exported.status_code == 200 and len(exported.get_json()) == 2
+assert client.post("/admin/import", headers=T, json={"a": 1}).status_code == 400
+assert client.post("/admin/import", headers=T, json=[{"date": "2026-11-23"}]).status_code == 400
+imp = client.post("/admin/import", headers=T, json=[B1, B3])
+assert imp.status_code == 201 and imp.get_json()["imported"] == 2
+assert client.delete("/admin/battles").status_code == 403
+assert client.delete("/admin/battles", headers=T).get_json()["deleted"] == 4
+assert client.get("/battles").get_json() == []
 
 os.remove(storage.DB)
 print("усі перевірки пройдено")
