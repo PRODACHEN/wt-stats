@@ -20,16 +20,18 @@ echo "== тести"
 ./venv/bin/python tests.py
 
 echo "== nginx: /admin/ з інтернету -> 404"
-sudo cp deploy/nginx.conf /etc/nginx/sites-available/wt-stats
-sudo nginx -t
-sudo systemctl reload nginx
+# Робочий конфіг НЕ перезаписуємо (у ньому блоки certbot з HTTPS), лише перевіряємо.
+if ! sudo grep -q 'location ~ \^/admin' /etc/nginx/sites-available/wt-stats; then
+    echo "УВАГА: у /etc/nginx/sites-available/wt-stats немає блоку location для /admin/."
+    echo "Додайте його вручну з deploy/nginx.conf і виконайте: sudo nginx -t && sudo systemctl reload nginx"
+fi
 sudo systemctl restart wt-stats
 
 echo "== резервна копія зараз і щодня о 20:00 (cron)"
 ./venv/bin/python backup.py
 LINE="0 20 * * * cd $PWD && $PWD/venv/bin/python $PWD/backup.py >> $PWD/backups/backup.log 2>&1"
-( crontab -l 2>/dev/null | grep -v 'backup.py' ; echo "$LINE" ) | crontab -
-crontab -l | grep backup.py
+( crontab -l 2>/dev/null | grep -v 'backup.py' || true ; echo "$LINE" ) | crontab -
+crontab -l | grep backup.py || echo "УВАГА: рядок cron не додався"
 
 echo "== fail2ban для ssh"
 sudo apt install -y fail2ban > /dev/null

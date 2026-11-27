@@ -116,8 +116,10 @@ HTTPS:
 3. Flask вимагає заголовок `X-Admin-Token` з `.env`, інакше 403.
 
 Доступ до адмінки з телефона/ноутбука: Tailscale на сервері
-(`sudo tailscale up`, потім `sudo tailscale serve --bg 8000`), адреса `https://...ts.net`
-видна лише з моїх пристроїв у Tailscale.
+(`sudo tailscale up`, потім `sudo tailscale serve --bg --https=8443 8000`), адреса
+`https://wt-stats.tail15dd4a.ts.net:8443` видна лише з моїх пристроїв у Tailscale.
+Порт 8443, а не стандартний 443: на 443 працює nginx для Cloudflare, і якщо
+`tailscale serve` займе 443, nginx не відкриє порт і Cloudflare віддасть помилку 521.
 
 Блокування адрес: Cloudflare, Security → WAF → Custom rules, IP Source Address equals ... → Block.
 ssh захищений fail2ban (5 помилок за 10 хв → бан на годину).
@@ -127,7 +129,8 @@ ssh захищений fail2ban (5 помилок за 10 хв → бан на �
 
     python -c "import sqlite3; print(sqlite3.connect('backups/data-2026-11-27.db').execute('SELECT COUNT(*) FROM battles').fetchone())"
 
-Розгортання змін лаби 10 на сервері: `git pull && bash deploy/lab10.sh`.
+Розгортання змін лаби 10 на сервері: `git pull && bash deploy/lab10.sh`
+(скрипт не перезаписує робочий конфіг nginx з HTTPS від certbot, лише перевіряє його).
 
 ### Аудит
 
@@ -139,7 +142,7 @@ ssh захищений fail2ban (5 помилок за 10 хв → бан на �
 | доступ в обхід Cloudflare | `curl http://IP_СЕРВЕРА` ззовні не відповідає | закрито: ufw пускає 80/443 лише з адрес Cloudflare, gunicorn слухає 127.0.0.1 |
 | флуд запитами | 100 POST у циклі через https://api... | закрито: rate limiting у Cloudflare на /battles |
 | підбір пароля ssh | `sudo fail2ban-client status sshd` | закрито: fail2ban |
-| адмінка з інтернету | https://api.prodachen.pp.ua/admin/export з телефона → 404; з Tailscale без токена → 403 | закрито: nginx, CF-Connecting-IP, токен |
+| адмінка з інтернету | https://api.prodachen.pp.ua/admin/export з телефона → 404; https://wt-stats.tail15dd4a.ts.net:8443/admin/export без токена → 403 | закрито: nginx, CF-Connecting-IP, токен |
 | секрети в git | `git log -p \| grep -i token`; `git log --all --name-only \| grep env$` | закрито: .env у .gitignore |
 | втрата даних | видалити копію data.db, відновити з backups/ | закрито: backup.py за розкладом; раз на тиждень копіюю бекап на ноутбук (`scp`) |
 | вразливі бібліотеки | `pip install pip-audit`, `pip-audit -r requirements.txt` | перевіряю, оновлюю версії в requirements.txt |
